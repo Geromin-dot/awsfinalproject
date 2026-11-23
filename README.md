@@ -7,7 +7,7 @@ A small Next.js project for posting class reminders and schedule updates. The pr
 Use Node.js 22.
 
 ```sh
-npm ci
+npm install
 npm run dev
 ```
 
