@@ -1,41 +1,39 @@
-# Class Announcement Board
+# Class Board
 
-A small Next.js project for posting class reminders and schedule updates. The progress-check version lets you post and view announcements and download a sample class reminder. Posts persist across refreshes in the same browser.
+Students can read announcements, filter by category, see pinned updates first, and download PDFs. The teacher dashboard supports password sign-in, publishing, editing, deleting, pinning, and attaching one PDF of up to 2 MiB.
 
-## Run locally
+## Run the full local demo
 
-Use Node.js 22.
+Use Node.js 22. Run `npm install` if dependencies are missing, then run `npm run demo`. Open http://localhost:3100 and use the teacher password printed in your terminal. Posts and attachments are shared across browsers using the same local server and are stored in the ignored `.board-data` folder. The first launch includes editable sample posts. The teacher password changes on restart.
 
-```sh
-npm install
-npm run dev
+With no server configuration, the app displays a read-only sample board suitable for a Vercel preview.
+
+## Deploy to AWS
+
+The template requires an AWS account with permission to create the listed resources. Review the expected EC2, public IPv4, EBS, DynamoDB backup, and S3 charges before launching.
+
+1. Create a CloudFormation stack using [deploy/board-stack.yml](deploy/board-stack.yml). Acknowledge IAM resource creation. Wait for `CREATE_COMPLETE` and record the stack outputs.
+2. Point a DNS hostname at the EC2 public IPv4 address. The IPv4 can change after a stop/start. Connect to the instance through Systems Manager Session Manager.
+3. Install Node.js 22, git, and AWS CLI v2 if missing. Copy or clone this repository onto the instance, and run `npm install` and `npm run build`. Use the instance role for AWS authentication. Confirm it can read the table with `aws dynamodb scan --table-name YOUR_TABLE --max-items 1`.
+4. Start Next.js as an unprivileged user via systemd. Bind the app to `127.0.0.1:3000` using `npm run start -- --hostname 127.0.0.1 --port 3000`. Set the service working directory to the repo and use a root-only service EnvironmentFile with the following values.
+
+```dotenv
+BOARD_STORAGE=aws
+BOARD_ORIGIN=https://board.example.org
+BOARD_TABLE=YourStackTableOutput
+BOARD_BUCKET=YourStackBucketOutput
+BOARD_TEACHER_PASSWORD=replace-with-a-long-random-password
+BOARD_SESSION_SECRET=replace-with-an-independent-random-secret
 ```
 
-Open http://localhost:3000.
+5. Install Caddy and use the same DNS hostname as `BOARD_ORIGIN` in the Caddyfile.
 
-## Deploy the progress-check preview to Vercel
+```caddyfile
+board.example.org {
+    reverse_proxy 127.0.0.1:3000
+}
+```
 
-Import this GitHub repository in Vercel and keep the **Next.js** framework preset. No environment variables are needed for this version.
+6. Verify HTTPS. Sign in and post a test announcement with a PDF, open the board in a fresh browser, download the attachment, and verify the record in DynamoDB and PDF in S3. Capture the AWS console evidence and manually draw the rubric's architecture diagram from your deployed resources.
 
-## Progress-check demo
-
-1. Open the board and post an announcement titled **Group presentation reminder**.
-2. Refresh the page to show that the post is still there.
-3. Download the class reminder.
-4. Explain that shared cloud storage is the next milestone. The preview saves posts only in the current browser and uses a built-in sample file.
-
-## Planned cloud deployment
-
-The project brief requires compute, a database, cloud storage, and a networking configuration. Use the row for the provider approved by the instructor.
-
-| Component | If GCP is assigned | If AWS is approved |
-| --- | --- | --- |
-| Compute | Cloud Run runs the Next.js app | EC2 runs the Next.js app |
-| Database | Firestore stores announcements | DynamoDB stores announcements |
-| File storage | Cloud Storage holds the reminder | A private S3 bucket holds the reminder |
-| Networking | Dedicated VPC subnet with Direct VPC egress | VPC and a security group for the EC2 instance |
-| Identity | Cloud Run service account | EC2 instance role |
-
-The same interface can be reused. In the cloud deployment, a Next.js server endpoint will write and read announcements through the database SDK. A second endpoint will return the reminder from the private bucket. Give the compute identity the permissions it needs and keep cloud credentials on the server. Use HTTPS for the deployed app.
-
-For the final demo, show a newly saved post in the cloud database and the reminder object in the cloud bucket. Show the app, compute resource, and network configuration. Create the required architecture diagram manually so it matches the deployed resources.
+The small classroom feed uses a DynamoDB scan. Anyone with the board URL can read announcements and their attached PDFs. After grading, retain any evidence/data you need, empty the stack's S3 bucket, and delete the stack if you no longer need the resources.

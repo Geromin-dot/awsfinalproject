@@ -1,114 +1,237 @@
 import Head from "next/head";
 import { useEffect, useState } from "react";
+import { categories, samplePosts, sortPosts } from "../lib/board";
+import styles from "../styles/Board.module.css";
 
-const STORAGE_KEY = "class-announcement-board:v1";
-const POST_LIMIT = 30;
-const REMINDER = "CLASS REMINDER\n\nCheck the board before class for schedule changes and assignment deadlines.\nBring your laptop or notebook to the next group activity.\n";
-const REMINDER_URL = "data:text/plain;charset=utf-8," + encodeURIComponent(REMINDER);
+const emptyPost = { title: "", message: "", category: "General", pinned: false };
+const dateFormat = new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeZone: "Asia/Manila" });
+
+async function boardRequest(body) {
+  const response = await fetch("/api/board", body ? {
+    method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body),
+  } : { cache: "no-store" });
+  const result = await response.json();
+  if (!response.ok) throw new Error(result.error || "Something went wrong. Please try again.");
+  return result;
+}
+
+function encodeFile(file) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onload = () => resolve({ name: file.name, data: reader.result.split(",")[1] });
+    reader.onerror = () => reject(new Error("The attachment could not be read."));
+    reader.readAsDataURL(file);
+  });
+}
 
 export default function ClassAnnouncementBoard() {
-  const [posts, setPosts] = useState([]);
-  const [feedback, setFeedback] = useState("");
-  const [ready, setReady] = useState(false);
+  const [board, setBoard] = useState({ posts: sortPosts(samplePosts), mode: "", teacher: false });
+  const [view, setView] = useState("students");
+  const [category, setCategory] = useState("All");
+  const [draft, setDraft] = useState(emptyPost);
+  const [attachment, setAttachment] = useState(null);
+  const [removeAttachment, setRemoveAttachment] = useState(false);
+  const [fileInput, setFileInput] = useState(0);
+  const [confirmDelete, setConfirmDelete] = useState(null);
+  const [busy, setBusy] = useState(false);
+  const [notice, setNotice] = useState(null);
 
   useEffect(() => {
-    try {
-      const saved = JSON.parse(window.localStorage.getItem(STORAGE_KEY) || "[]");
-      if (Array.isArray(saved)) setPosts(saved);
-    } catch {
-      setFeedback("Saved announcements could not be loaded.");
-    }
-    setReady(true);
+    let active = true;
+    boardRequest().then((result) => { if (active) setBoard(result); })
+      .catch(() => {
+        if (active) {
+          setBoard({ posts: [], mode: "", teacher: false });
+          setNotice({ error: true, text: "Could not load the board. Refresh the page to try again." });
+        }
+      });
+    return () => { active = false; };
   }, []);
 
-  function publish(event) {
-    event.preventDefault();
-    const form = event.currentTarget;
-    const fields = new FormData(form);
-    const title = fields.get("title").trim();
-    const message = fields.get("message").trim();
+  function openView(nextView) {
+    setView(nextView);
+    setNotice(null);
+    setConfirmDelete(null);
+  }
 
-    if (!title || !message || title.length > 80 || message.length > 500) {
-      setFeedback("Enter a title of 1–80 characters and a message of 1–500 characters.");
-      return;
-    }
+  function edit(post = emptyPost) {
+    setDraft(post);
+    setAttachment(null);
+    setRemoveAttachment(false);
+    setFileInput((value) => value + 1);
+  }
 
-    const post = { id: window.crypto.randomUUID(), title, message };
-    const updated = [post, ...posts].slice(0, POST_LIMIT);
-
+  async function change(getBody, success, onSuccess) {
+    setBusy(true);
+    setNotice(null);
     try {
-      window.localStorage.setItem(STORAGE_KEY, JSON.stringify(updated));
-      setPosts(updated);
-      form.reset();
-      setFeedback("Announcement posted.");
-    } catch {
-      setFeedback("The announcement could not be saved in this browser.");
+      await boardRequest(await getBody());
+      setBoard(await boardRequest());
+      onSuccess?.();
+      setNotice({ text: success });
+    } catch (error) {
+      setNotice({ error: true, text: error.message });
+    } finally {
+      setBusy(false);
     }
   }
 
+  function signIn(event) {
+    event.preventDefault();
+    const form = event.currentTarget;
+    const password = new FormData(form).get("password");
+    change(() => ({ action: "login", password }), "Signed in.", () => form.reset());
+  }
+
+  function save(event) {
+    event.preventDefault();
+    change(async () => {
+      if (attachment?.size > 2 * 1024 * 1024) throw new Error("Choose a PDF file up to 2 MB.");
+      return {
+        action: "save", id: draft.id, revision: draft.revision, title: draft.title, message: draft.message,
+        category: draft.category, pinned: draft.pinned, removeAttachment,
+        file: attachment ? await encodeFile(attachment) : null,
+      };
+    }, draft.id ? "Announcement updated." : "Announcement published.", () => edit());
+  }
+
+  const visible = category === "All" ? board.posts : board.posts.filter((post) => post.category === category);
+  const teacherView = view === "teacher";
+
+  function postCard(post, manage = false) {
+    return (
+      <article className={styles.post} data-pinned={post.pinned} key={post.id}>
+        <div className={styles.meta}>
+          <span className={styles.category} data-category={post.category}>{post.category}</span>
+          {post.pinned && <span className={styles.pin}>Pinned</span>}
+          <time dateTime={post.createdAt}>{dateFormat.format(new Date(post.createdAt))}</time>
+        </div>
+        <h3>{post.title}</h3>
+        <p>{post.message}</p>
+        {post.attachment && <a className={styles.attachment} href={"/api/board?download=" + encodeURIComponent(post.id)}>
+          <span aria-hidden="true">↓</span> {post.attachment.name}
+        </a>}
+        {manage && (
+          <div className={styles.actions}>
+            <button type="button" disabled={busy} onClick={() => edit(post)}>Edit</button>
+            <button type="button" disabled={busy} onClick={() => change(
+              () => ({ action: "pin", id: post.id, revision: post.revision }),
+              post.pinned ? "Announcement unpinned." : "Announcement pinned.")}>{post.pinned ? "Unpin" : "Pin"}</button>
+            {confirmDelete === post.id ? (
+              <>
+                <button type="button" className={styles.danger} disabled={busy} onClick={() => change(
+                  () => ({ action: "delete", id: post.id, revision: post.revision }), "Announcement deleted.", () => {
+                    setConfirmDelete(null);
+                    if (draft.id === post.id) edit();
+                  })}>Confirm delete</button>
+                <button type="button" disabled={busy} onClick={() => setConfirmDelete(null)}>Cancel</button>
+              </>
+            ) : <button type="button" className={styles.danger} disabled={busy} onClick={() => setConfirmDelete(post.id)}>Delete</button>}
+          </div>
+        )}
+      </article>
+    );
+  }
+
   return (
-    <>
+    <div className={styles.shell}>
       <Head>
-        <title>Class Announcement Board</title>
-        <meta name="description" content="Post and view class announcements." />
+        <title>Class Board</title>
+        <meta name="description" content="Class announcements, deadlines, and files." />
       </Head>
-      <header className="masthead">
-        <div className="wrap">
-          <h1>Class Announcement Board</h1>
-          <p>Preview · Posts are saved in this browser.</p>
+      <header className={styles.header}>
+        <div className={styles.wrap + " " + styles.headerRow}>
+          <button className={styles.brand} onClick={() => openView("students")}>
+            <span aria-hidden="true" className={styles.mark}>▤</span> Class Board
+          </button>
+          <nav aria-label="Board views" className={styles.nav}>
+            <button aria-current={!teacherView ? "page" : undefined} onClick={() => openView("students")}>Student board</button>
+            <button aria-current={teacherView ? "page" : undefined} onClick={() => openView("teacher")}>Teacher dashboard</button>
+          </nav>
         </div>
       </header>
-      <main className="wrap columns">
-        <section className="card" aria-labelledby="post-title">
-          <h2 id="post-title">Post an announcement</h2>
-          <form onSubmit={publish}>
-            <label htmlFor="title">Title</label>
-            <input id="title" name="title" maxLength={80} required />
-            <label htmlFor="message">Message</label>
-            <textarea id="message" name="message" maxLength={500} rows={4} required />
-            <button type="submit" disabled={!ready}>Post announcement</button>
-            <p className="feedback" role="status">{feedback}</p>
+
+      <main className={styles.wrap}>
+        <section className={styles.hero}>
+          <div>
+            <h1>{teacherView ? "Teacher dashboard" : "Class announcements"}</h1>
+            <p>{teacherView ? "Publish class updates and keep important announcements at the top."
+              : "Class updates, deadlines, and files in one place."}</p>
+          </div>
+          {teacherView && board.teacher && <button className={styles.signout} disabled={busy} onClick={() =>
+            change(() => ({ action: "logout" }), "Signed out.", () => edit())}>Sign out</button>}
+        </section>
+
+        {notice && <p className={styles.notice} role={notice.error ? "alert" : "status"} data-error={Boolean(notice.error)}>{notice.text}</p>}
+        {!teacherView && (
+          <section className={styles.feed} aria-labelledby="announcements">
+            <div className={styles.feedHeader}>
+              <h2 id="announcements">Announcements</h2>
+              {["preview", "local"].includes(board.mode) && <span className={styles.demo}>
+                {board.mode === "preview" ? "Sample announcements" : "Local demo"}
+              </span>}
+            </div>
+            <div className={styles.filters} aria-label="Filter by category">
+              {["All", ...categories].map((item) => (
+                <button key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>
+              ))}
+            </div>
+            {visible.length ? visible.map((post) => postCard(post)) : <p className={styles.empty}>No announcements in this category.</p>}
+          </section>
+        )}
+
+        {teacherView && !board.teacher && (
+          <form className={styles.panel + " " + styles.login} onSubmit={signIn}>
+            <h2>Teacher sign-in</h2>
+            {board.mode === "preview" ? <p>Teacher tools are available on the configured class server.</p> :
+              <>
+                <label htmlFor="password">Teacher password</label>
+                <input id="password" name="password" type="password" required autoComplete="current-password" />
+                <button className={styles.primary} disabled={busy || !board.mode}>Sign in</button>
+              </>}
           </form>
-          <a className="download" href={REMINDER_URL} download="class-reminder.txt">Download class reminder (.txt)</a>
-        </section>
-        <section aria-labelledby="recent-title">
-          <h2 id="recent-title">Recent announcements</h2>
-          {posts.length === 0 && <p className="card empty">No announcements yet.</p>}
-          {posts.map((post) => (
-            <article className="card announcement" key={post.id}>
-              <h3>{post.title}</h3>
-              <p>{post.message}</p>
-            </article>
-          ))}
-        </section>
+        )}
+
+        {teacherView && board.teacher && (
+          <div className={styles.dashboard}>
+            <form className={styles.panel + " " + styles.editor} onSubmit={save}>
+              <h2>{draft.id ? "Edit announcement" : "New announcement"}</h2>
+              <fieldset disabled={busy}>
+                <label htmlFor="title">Title</label>
+                <input id="title" required maxLength={100} value={draft.title}
+                  onChange={(event) => setDraft({ ...draft, title: event.target.value })} />
+                <label htmlFor="category">Category</label>
+                <select id="category" value={draft.category}
+                  onChange={(event) => setDraft({ ...draft, category: event.target.value })}>
+                  {categories.map((item) => <option key={item}>{item}</option>)}
+                </select>
+                <label htmlFor="message">Message</label>
+                <textarea id="message" required maxLength={2000} rows={5} value={draft.message}
+                  onChange={(event) => setDraft({ ...draft, message: event.target.value })} />
+                <label htmlFor="file">PDF attachment <span>(optional, up to 2 MB)</span></label>
+                <input key={fileInput} id="file" type="file" accept="application/pdf,.pdf"
+                  onChange={(event) => setAttachment(event.target.files[0] || null)} />
+                {draft.attachment && !attachment && <label className={styles.check}>
+                  <input type="checkbox" checked={removeAttachment}
+                    onChange={(event) => setRemoveAttachment(event.target.checked)} /> Remove {draft.attachment.name}
+                </label>}
+                <label className={styles.check}>
+                  <input type="checkbox" checked={draft.pinned}
+                    onChange={(event) => setDraft({ ...draft, pinned: event.target.checked })} /> Pin to top
+                </label>
+                <div className={styles.formActions}>
+                  <button className={styles.primary}>{draft.id ? "Save changes" : "Publish announcement"}</button>
+                  {draft.id && <button type="button" className={styles.secondary} onClick={() => edit()}>Cancel edit</button>}
+                </div>
+              </fieldset>
+            </form>
+            <section aria-labelledby="published">
+              <h2 id="published">Published announcements</h2>
+              {board.posts.length ? board.posts.map((post) => postCard(post, true)) : <p className={styles.empty}>No announcements yet.</p>}
+            </section>
+          </div>
+        )}
       </main>
-      <style jsx global>{`
-        :root { color-scheme: light; font-family: system-ui, sans-serif; color: #18243a; background: #f5f7fb; }
-        * { box-sizing: border-box; }
-        body { margin: 0; line-height: 1.5; }
-        .wrap { width: min(940px, calc(100% - 40px)); margin-inline: auto; }
-        .masthead { color: #fff; background: #132646; padding: 34px 0; }
-        h1 { font-size: clamp(1.65rem, 5vw, 2.5rem); letter-spacing: -0.04em; margin: 0; }
-        .masthead p { margin: 4px 0 0; color: #d3dff2; }
-        .columns { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1.3fr); align-items: start; gap: 28px; padding-block: 28px; }
-        .card { background: #fff; border: 1px solid #dce3ee; border-radius: 12px; padding: 18px; }
-        h2 { font-size: 1.2rem; margin: 0 0 14px; }
-        h3 { font-size: 1.05rem; margin: 0 0 4px; overflow-wrap: anywhere; }
-        .announcement, .empty { margin: 0 0 10px; }
-        .announcement p { color: #40506a; margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; }
-        form { display: grid; gap: 8px; }
-        label { font-weight: 600; }
-        input, textarea { min-width: 0; font: inherit; color: inherit; border: 1px solid #8190a5; border-radius: 6px; padding: 8px 10px; }
-        textarea { resize: vertical; }
-        button { justify-self: start; margin-top: 6px; border: 0; border-radius: 6px; padding: 9px 14px; color: #fff; background: #1d4ed8; font: inherit; font-weight: 600; cursor: pointer; }
-        button:disabled { opacity: 0.65; cursor: wait; }
-        button:hover:enabled { background: #173fab; }
-        .feedback { margin: 0; color: #40506a; }
-        .feedback:empty { display: none; }
-        .download { display: inline-block; margin-top: 17px; color: #1948bd; }
-        :focus-visible { outline: 3px solid #225de0; outline-offset: 3px; }
-        @media (max-width: 690px) { .columns { grid-template-columns: 1fr; gap: 22px; } }
-      `}</style>
-    </>
+    </div>
   );
 }
