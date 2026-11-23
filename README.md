@@ -1,6 +1,6 @@
 # Class Board
 
-Students can read announcements, filter by category, see pinned updates first, and download PDFs. The teacher dashboard supports password sign-in, publishing, editing, deleting, pinning, and attaching one PDF of up to 2 MiB.
+Students can read announcements, search and filter by category, bookmark posts in their browser, check upcoming deadlines, see pinned updates first, and download PDFs. The teacher dashboard supports password sign-in, publishing, editing, deleting, pinning, setting optional deadlines, and attaching one PDF of up to 2 MiB.
 
 ## Run the full local demo
 

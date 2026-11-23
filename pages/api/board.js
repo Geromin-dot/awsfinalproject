@@ -1,5 +1,5 @@
 import { createHmac, createHash, randomUUID, timingSafeEqual } from "node:crypto";
-import { categories, sortPosts } from "../../lib/board";
+import { categories, sortPosts, validDueDate } from "../../lib/board";
 import { Conflict, deletePost, download, listPosts, mode, savePost } from "../../lib/storage";
 
 const MAX_PDF = 2 * 1024 * 1024;
@@ -114,13 +114,15 @@ export default async function handler(req, res) {
     if (!title || title.length > 100 || !message || message.length > 2000 || !categories.includes(body.category)) {
       return res.status(400).json({ error: "Enter a category, a title of 1–100 characters, and a message of 1–2,000 characters." });
     }
+    const dueDate = body.dueDate ?? previous?.dueDate ?? "";
+    if (dueDate !== "" && !validDueDate(dueDate)) return res.status(400).json({ error: "Enter a valid deadline." });
     const pdf = body.file ? parsePdf(body.file) : null;
     if (body.file && !pdf) return res.status(400).json({ error: "Choose a PDF file up to 2 MB." });
     const id = previous?.id || randomUUID();
     const attachment = pdf ? { key: "attachments/" + id + "/" + randomUUID() + ".pdf", name: pdf.name }
       : body.removeAttachment ? null : previous?.attachment || null;
     await savePost({
-      id, title, message, category: body.category, pinned: body.pinned === true, attachment,
+      id, title, message, dueDate, category: body.category, pinned: body.pinned === true, attachment,
       createdAt: previous?.createdAt || new Date().toISOString(), revision: (previous?.revision || 0) + 1,
     }, previous, pdf?.bytes);
     return res.json({ ok: true });

@@ -1,11 +1,19 @@
 import Head from "next/head";
 import { useEffect, useState } from "react";
+import { flushSync } from "react-dom";
 import { categories, samplePosts, sortPosts } from "../lib/board";
 import { previewBoard, updatePreview } from "../lib/preview";
 import styles from "../styles/Board.module.css";
 
-const emptyPost = { title: "", message: "", category: "General", pinned: false };
+const emptyPost = { title: "", message: "", category: "General", pinned: false, dueDate: "" };
 const dateFormat = new Intl.DateTimeFormat("en-PH", { dateStyle: "medium", timeZone: "Asia/Manila" });
+
+const savedKey = "class-announcement-board:saved";
+const manilaDay = new Intl.DateTimeFormat("sv-SE", { timeZone: "Asia/Manila" });
+
+function deadlineLabel(date) {
+  return dateFormat.format(new Date(date + "T00:00:00+08:00"));
+}
 
 async function boardRequest(body) {
   const response = await fetch("/api/board", body ? {
@@ -29,6 +37,10 @@ export default function ClassAnnouncementBoard() {
   const [board, setBoard] = useState({ posts: sortPosts(samplePosts), mode: "", teacher: false });
   const [view, setView] = useState("students");
   const [category, setCategory] = useState("All");
+  const [query, setQuery] = useState("");
+  const [savedOnly, setSavedOnly] = useState(false);
+  const [saved, setSaved] = useState([]);
+  const [today, setToday] = useState("");
   const [draft, setDraft] = useState(emptyPost);
   const [attachment, setAttachment] = useState(null);
   const [removeAttachment, setRemoveAttachment] = useState(false);
@@ -39,6 +51,13 @@ export default function ClassAnnouncementBoard() {
 
   useEffect(() => {
     let active = true;
+    setToday(manilaDay.format(new Date()));
+    try {
+      const stored = JSON.parse(localStorage.getItem(savedKey) || "[]");
+      if (Array.isArray(stored)) setSaved(stored);
+    } catch {
+      setSaved([]);
+    }
     boardRequest().then((result) => { if (active) setBoard(result.mode === "preview" ? previewBoard() : result); })
       .catch(() => {
         if (active) {
@@ -95,18 +114,33 @@ export default function ClassAnnouncementBoard() {
       if (attachment?.size > 2 * 1024 * 1024) throw new Error("Choose a PDF file up to 2 MB.");
       return {
         action: "save", id: draft.id, revision: draft.revision, title: draft.title, message: draft.message,
-        category: draft.category, pinned: draft.pinned, removeAttachment,
+        category: draft.category, pinned: draft.pinned, dueDate: draft.dueDate || "", removeAttachment,
         file: attachment ? await encodeFile(attachment) : null,
       };
     }, draft.id ? "Announcement updated." : "Announcement published.", () => edit());
   }
 
-  const visible = category === "All" ? board.posts : board.posts.filter((post) => post.category === category);
+  function toggleSaved(id) {
+    const updated = saved.includes(id) ? saved.filter((item) => item !== id) : [...saved, id];
+    try {
+      localStorage.setItem(savedKey, JSON.stringify(updated));
+      setSaved(updated);
+    } catch {
+      setNotice({ error: true, text: "This browser could not save your bookmark." });
+    }
+  }
+
+  const search = query.trim().toLowerCase();
+  const visible = board.posts.filter((post) => (category === "All" || post.category === category)
+    && (!savedOnly || saved.includes(post.id))
+    && [post.title, post.message, post.attachment?.name].some((field) => field?.toLowerCase().includes(search)));
+  const upcoming = today ? board.posts.filter((post) => post.dueDate && post.dueDate >= today)
+    .sort((first, second) => first.dueDate.localeCompare(second.dueDate)).slice(0, 5) : [];
   const teacherView = view === "teacher";
 
   function postCard(post, manage = false) {
     return (
-      <article className={styles.post} data-pinned={post.pinned} key={post.id}>
+      <article id={manage ? undefined : "post-" + post.id} className={styles.post} data-pinned={post.pinned} key={post.id}>
         <div className={styles.meta}>
           <span className={styles.category} data-category={post.category}>{post.category}</span>
           {post.pinned && <span className={styles.pin}>Pinned</span>}
@@ -114,10 +148,16 @@ export default function ClassAnnouncementBoard() {
         </div>
         <h3>{post.title}</h3>
         <p>{post.message}</p>
+        {post.dueDate && <p className={styles.deadline}>Due <time dateTime={post.dueDate}>{deadlineLabel(post.dueDate)}</time></p>}
         {post.attachment && <a className={styles.attachment} href={post.attachment.data ? "data:application/pdf;base64," + post.attachment.data
           : "/api/board?download=" + encodeURIComponent(post.id)} download={post.attachment.name}>
-          <span aria-hidden="true">↓</span> {post.attachment.name}
+          Download {post.attachment.name}
         </a>}
+        {!manage && <div className={styles.actions}>
+          <button type="button" aria-pressed={saved.includes(post.id)} onClick={() => toggleSaved(post.id)}>
+            {saved.includes(post.id) ? "Saved" : "Save for later"}
+          </button>
+        </div>}
         {manage && (
           <div className={styles.actions}>
             <button type="button" disabled={busy} onClick={() => edit(post)}>Edit</button>
@@ -171,20 +211,43 @@ export default function ClassAnnouncementBoard() {
 
         {notice && <p className={styles.notice} role={notice.error ? "alert" : "status"} data-error={Boolean(notice.error)}>{notice.text}</p>}
         {!teacherView && (
-          <section className={styles.feed} aria-labelledby="announcements">
-            <div className={styles.feedHeader}>
-              <h2 id="announcements">Announcements</h2>
-              {["preview", "local"].includes(board.mode) && <span className={styles.demo}>
-                {board.mode === "preview" ? "Browser demo · Changes saved on this device" : "Local demo"}
-              </span>}
-            </div>
-            <div className={styles.filters} aria-label="Filter by category">
-              {["All", ...categories].map((item) => (
-                <button key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>
-              ))}
-            </div>
-            {visible.length ? visible.map((post) => postCard(post)) : <p className={styles.empty}>No announcements in this category.</p>}
-          </section>
+          <div className={styles.studentLayout}>
+            <section className={styles.feed} aria-labelledby="announcements">
+              <div className={styles.feedHeader}>
+                <h2 id="announcements">Announcements</h2>
+                {["preview", "local"].includes(board.mode) && <span className={styles.demo}>
+                  {board.mode === "preview" ? "Browser demo · Changes saved on this device" : "Local demo"}
+                </span>}
+              </div>
+              <label className={styles.searchLabel} htmlFor="announcement-search">Search announcements</label>
+              <input className={styles.search} id="announcement-search" type="search" placeholder="Search titles, messages, or files"
+                value={query} onChange={(event) => setQuery(event.target.value)} />
+              <div className={styles.filters} aria-label="Filter by category">
+                {["All", ...categories].map((item) => (
+                  <button key={item} aria-pressed={category === item} onClick={() => setCategory(item)}>{item}</button>
+                ))}
+                <button aria-pressed={savedOnly} onClick={() => setSavedOnly(!savedOnly)}>Saved only</button>
+              </div>
+              {visible.length ? visible.map((post) => postCard(post)) : <p className={styles.empty}>{savedOnly ? "No saved announcements match these filters." : "No announcements match these filters."}</p>}
+            </section>
+            <aside className={styles.panel + " " + styles.upcoming} aria-labelledby="upcoming">
+              <h2 id="upcoming">Upcoming deadlines</h2>
+              {upcoming.length ? (
+                <ul>
+                  {upcoming.map((post) => (
+                    <li key={post.id}>
+                      <time dateTime={post.dueDate}>{post.dueDate === today ? "Today" : deadlineLabel(post.dueDate)}</time>
+                      <a href={"#post-" + post.id} onClick={() => flushSync(() => {
+                        setQuery("");
+                        setCategory("All");
+                        setSavedOnly(false);
+                      })}>{post.title}</a>
+                    </li>
+                  ))}
+                </ul>
+              ) : <p>No upcoming deadlines.</p>}
+            </aside>
+          </div>
         )}
 
         {teacherView && board.mode === "preview" && (
@@ -216,6 +279,9 @@ export default function ClassAnnouncementBoard() {
                 <label htmlFor="message">Message</label>
                 <textarea id="message" required maxLength={2000} rows={5} value={draft.message}
                   onChange={(event) => setDraft({ ...draft, message: event.target.value })} />
+                <label htmlFor="due-date">Deadline <span>(optional)</span></label>
+                <input id="due-date" type="date" min="0001-01-01" max="9999-12-31" value={draft.dueDate || ""}
+                  onChange={(event) => setDraft({ ...draft, dueDate: event.target.value })} />
                 <label htmlFor="file">PDF attachment <span>(optional, up to 2 MB)</span></label>
                 <input key={fileInput} id="file" type="file" accept="application/pdf,.pdf"
                   onChange={(event) => setAttachment(event.target.files[0] || null)} />
