@@ -2,6 +2,8 @@
 
 Students can read announcements, search and filter by category, bookmark posts in their browser, check upcoming deadlines, see pinned updates first, and download PDFs. The teacher dashboard supports password sign-in, publishing, editing, deleting, pinning, setting optional deadlines, and attaching one PDF of up to 2 MiB.
 
+The Admin Console shows board totals, lets admins pin or remove announcements, and exports announcement metadata to CSV. Demo modes open both staff views without a password. AWS uses separate teacher and admin passwords.
+
 ## Run the full local demo
 
 Use Node.js 22. Run `npm install` if dependencies are missing, then run `npm run demo`. Open http://localhost:3100 and select Teacher dashboard to begin. Posts and attachments are shared across browsers using the same local server and are stored in the ignored `.board-data` folder. The first launch includes editable sample posts.
@@ -23,6 +25,7 @@ BOARD_ORIGIN=https://board.example.org
 BOARD_TABLE=YourStackTableOutput
 BOARD_BUCKET=YourStackBucketOutput
 BOARD_TEACHER_PASSWORD=replace-with-a-long-random-password
+BOARD_ADMIN_PASSWORD=replace-with-a-different-long-random-password
 BOARD_SESSION_SECRET=replace-with-an-independent-random-secret
 ```
 
@@ -37,3 +40,5 @@ board.example.org {
 6. Verify HTTPS. Sign in and post a test announcement with a PDF, open the board in a fresh browser, download the attachment, and verify the record in DynamoDB and PDF in S3. Capture the AWS console evidence and manually draw the rubric's architecture diagram from your deployed resources.
 
 The small classroom feed uses a DynamoDB scan. Anyone with the board URL can read announcements and their attached PDFs. After grading, retain any evidence/data you need, empty the stack's S3 bucket, and delete the stack if you no longer need the resources.
+
+Campus photograph by [Jeremy Huang on Unsplash](https://unsplash.com/photos/historic-sandstone-building-with-arched-entryway-and-ivy-5x0rHD0iB3A).

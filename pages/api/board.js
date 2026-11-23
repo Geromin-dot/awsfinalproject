@@ -16,20 +16,22 @@ function signature(payload) {
   return createHmac("sha256", process.env.BOARD_SESSION_SECRET).update(payload).digest("hex");
 }
 
-function hasSession(req) {
-  if (mode() === "local") return true;
-  if (!process.env.BOARD_SESSION_SECRET) return false;
+function sessionRole(req) {
+  if (mode() === "local") return "admin";
+  if (!process.env.BOARD_SESSION_SECRET) return null;
   const [payload, token] = (req.cookies[cookieName] || "").split(".");
-  const expiry = Number(payload.split(":")[0]);
-  return expiry > Date.now() && Boolean(token) && equal(token, signature(payload));
+  const [expiry, , role = "teacher"] = payload.split(":");
+  if (!["teacher", "admin"].includes(role) || Number(expiry) <= Date.now()
+    || !Number.isFinite(Number(expiry)) || !token || !equal(token, signature(payload))) return null;
+  return role;
 }
 
-function setSession(res, signedIn) {
-  const payload = new Date(Date.now() + SESSION * 1000).getTime() + ":" + randomUUID();
-  const value = signedIn ? payload + "." + signature(payload) : "";
+function setSession(res, role) {
+  const payload = new Date(Date.now() + SESSION * 1000).getTime() + ":" + randomUUID() + ":" + role;
+  const value = role ? payload + "." + signature(payload) : "";
   const secure = (mode() === "aws" || process.env.VERCEL) ? "; Secure" : "";
   res.setHeader("Set-Cookie", cookieName + "=" + value + "; Path=/; HttpOnly; SameSite=Strict; Max-Age="
-    + (signedIn ? SESSION : 0) + secure);
+    + (role ? SESSION : 0) + secure);
 }
 
 function sameOrigin(req) {
@@ -67,7 +69,8 @@ export default async function handler(req, res) {
         res.setHeader("Content-Disposition", 'attachment; filename="' + attachment.name + '"');
         return res.send(bytes);
       }
-      return res.json({ posts: posts.map(publicPost), teacher: hasSession(req), mode: mode() });
+      const role = sessionRole(req);
+      return res.json({ posts: posts.map(publicPost), teacher: Boolean(role), admin: role === "admin", mode: mode() });
     }
 
     if (req.method !== "POST") {
@@ -79,21 +82,24 @@ export default async function handler(req, res) {
 
     const body = req.body || {};
     if (body.action === "login") {
-      const password = process.env.BOARD_TEACHER_PASSWORD;
+      const role = body.role === "admin" ? "admin" : "teacher";
+      const password = role === "admin" ? process.env.BOARD_ADMIN_PASSWORD : process.env.BOARD_TEACHER_PASSWORD;
       if (!password || !process.env.BOARD_SESSION_SECRET) {
-        return res.status(503).json({ error: "Teacher sign-in has not been configured." });
+        return res.status(503).json({ error: "Sign-in for this role has not been configured." });
       }
       if (typeof body.password !== "string" || !equal(body.password, password)) {
-        return res.status(401).json({ error: "Incorrect teacher password." });
+        return res.status(401).json({ error: "Incorrect password." });
       }
-      setSession(res, true);
-      return res.json({ teacher: true });
+      setSession(res, role);
+      return res.json({ ok: true });
     }
     if (body.action === "logout") {
-      setSession(res, false);
-      return res.json({ teacher: false });
+      setSession(res, null);
+      return res.json({ ok: true });
     }
-    if (!hasSession(req)) return res.status(401).json({ error: "Sign in as a teacher to make changes." });
+    const role = sessionRole(req);
+    if (!role) return res.status(401).json({ error: "Sign in to make changes." });
+    if (body.moderation && role !== "admin") return res.status(403).json({ error: "Admin access required." });
 
     const previous = body.id ? (await listPosts()).find((post) => post.id === body.id) : undefined;
     if (body.id && !previous) return res.status(404).json({ error: "This announcement no longer exists." });

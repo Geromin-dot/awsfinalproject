@@ -3,6 +3,7 @@ import { useEffect, useState } from "react";
 import { flushSync } from "react-dom";
 import { categories, samplePosts, sortPosts } from "../lib/board";
 import { previewBoard, updatePreview } from "../lib/preview";
+import AdminConsole from "../components/AdminConsole";
 import styles from "../styles/Board.module.css";
 
 const emptyPost = { title: "", message: "", category: "General", pinned: false, dueDate: "" };
@@ -105,7 +106,7 @@ export default function ClassAnnouncementBoard() {
     event.preventDefault();
     const form = event.currentTarget;
     const password = new FormData(form).get("password");
-    change(() => ({ action: "login", password }), "Signed in.", () => form.reset());
+    change(() => ({ action: "login", password, role: view === "admin" ? "admin" : "teacher" }), "Signed in.", () => form.reset());
   }
 
   function save(event) {
@@ -137,6 +138,18 @@ export default function ClassAnnouncementBoard() {
   const upcoming = today ? board.posts.filter((post) => post.dueDate && post.dueDate >= today)
     .sort((first, second) => first.dueDate.localeCompare(second.dueDate)).slice(0, 5) : [];
   const teacherView = view === "teacher";
+  const adminView = view === "admin";
+  const staffView = teacherView || adminView;
+  const staffSignedIn = adminView ? board.admin : board.teacher;
+
+  function moderate(action, post) {
+    const message = action === "delete" ? "Announcement removed."
+      : post.pinned ? "Announcement unpinned." : "Announcement pinned.";
+    change(() => ({ action, id: post.id, revision: post.revision, moderation: true }), message, () => {
+      setConfirmDelete(null);
+      if (draft.id === post.id) edit();
+    });
+  }
 
   function postCard(post, manage = false) {
     return (
@@ -189,28 +202,30 @@ export default function ClassAnnouncementBoard() {
       <header className={styles.header}>
         <div className={styles.wrap + " " + styles.headerRow}>
           <button className={styles.brand} onClick={() => openView("students")}>
-            <span aria-hidden="true" className={styles.mark}>▤</span> Class Board
+            <span aria-hidden="true" className={styles.mark}>CB</span> <span>Class Board</span>
           </button>
           <nav aria-label="Board views" className={styles.nav}>
-            <button aria-current={!teacherView ? "page" : undefined} onClick={() => openView("students")}>Student board</button>
+            <button aria-current={!staffView ? "page" : undefined} onClick={() => openView("students")}>Student board</button>
             <button aria-current={teacherView ? "page" : undefined} onClick={() => openView("teacher")}>Teacher dashboard</button>
+            <button aria-current={adminView ? "page" : undefined} onClick={() => openView("admin")}>Admin console</button>
           </nav>
         </div>
       </header>
 
       <main className={styles.wrap}>
-        <section className={styles.hero}>
+        <section className={styles.hero} data-view={view}>
           <div>
-            <h1>{teacherView ? "Teacher dashboard" : "Class announcements"}</h1>
-            <p>{teacherView ? "Publish class updates and keep important announcements at the top."
+            <h1>{adminView ? "Admin console" : teacherView ? "Teacher dashboard" : "Class announcements"}</h1>
+            <p>{adminView ? "Review board activity, moderate announcements, and export a report."
+              : teacherView ? "Publish class updates and keep important announcements at the top."
               : "Class updates, deadlines, and files in one place."}</p>
           </div>
-          {teacherView && board.mode === "aws" && board.teacher && <button className={styles.signout} disabled={busy} onClick={() =>
+          {staffView && board.mode === "aws" && staffSignedIn && <button className={styles.signout} disabled={busy} onClick={() =>
             change(() => ({ action: "logout" }), "Signed out.", () => edit())}>Sign out</button>}
         </section>
 
         {notice && <p className={styles.notice} role={notice.error ? "alert" : "status"} data-error={Boolean(notice.error)}>{notice.text}</p>}
-        {!teacherView && (
+        {!staffView && (
           <div className={styles.studentLayout}>
             <section className={styles.feed} aria-labelledby="announcements">
               <div className={styles.feedHeader}>
@@ -250,17 +265,22 @@ export default function ClassAnnouncementBoard() {
           </div>
         )}
 
-        {teacherView && board.mode === "preview" && (
+        {staffView && board.mode === "preview" && (
           <p className={styles.notice}>Demo changes stay in this browser.</p>
         )}
 
-        {teacherView && board.mode === "aws" && !board.teacher && (
+        {staffView && board.mode === "aws" && !staffSignedIn && (
           <form className={styles.panel + " " + styles.login} onSubmit={signIn}>
-            <h2>Teacher sign-in</h2>
-            <label htmlFor="password">Teacher password</label>
+            <h2>{adminView ? "Admin sign-in" : "Teacher sign-in"}</h2>
+            <label htmlFor="password">{adminView ? "Admin password" : "Teacher password"}</label>
             <input id="password" name="password" type="password" required autoComplete="current-password" />
             <button className={styles.primary} disabled={busy}>Sign in</button>
           </form>
+        )}
+
+        {adminView && board.admin && (
+          <AdminConsole posts={board.posts} busy={busy} confirmDelete={confirmDelete}
+            setConfirmDelete={setConfirmDelete} onModerate={moderate} />
         )}
 
         {teacherView && board.teacher && (
