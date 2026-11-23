@@ -4,9 +4,9 @@ Students can read announcements, filter by category, see pinned updates first, a
 
 ## Run the full local demo
 
-Use Node.js 22. Run `npm install` if dependencies are missing, then run `npm run demo`. Open http://localhost:3100 and use the teacher password printed in your terminal. Posts and attachments are shared across browsers using the same local server and are stored in the ignored `.board-data` folder. The first launch includes editable sample posts. The teacher password changes on restart.
+Use Node.js 22. Run `npm install` if dependencies are missing, then run `npm run demo`. Open http://localhost:3100 and select Teacher dashboard to begin. Posts and attachments are shared across browsers using the same local server and are stored in the ignored `.board-data` folder. The first launch includes editable sample posts.
 
-With no server configuration, the app displays a read-only sample board suitable for a Vercel preview.
+With no server configuration, the Vercel preview opens the teacher dashboard without a password. Posts and PDFs are saved only in the current browser. Shared AWS mode uses the configured teacher password.
 
 ## Deploy to AWS
 

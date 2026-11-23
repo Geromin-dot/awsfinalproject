@@ -1,6 +1,7 @@
 import Head from "next/head";
 import { useEffect, useState } from "react";
 import { categories, samplePosts, sortPosts } from "../lib/board";
+import { previewBoard, updatePreview } from "../lib/preview";
 import styles from "../styles/Board.module.css";
 
 const emptyPost = { title: "", message: "", category: "General", pinned: false };
@@ -38,7 +39,7 @@ export default function ClassAnnouncementBoard() {
 
   useEffect(() => {
     let active = true;
-    boardRequest().then((result) => { if (active) setBoard(result); })
+    boardRequest().then((result) => { if (active) setBoard(result.mode === "preview" ? previewBoard() : result); })
       .catch(() => {
         if (active) {
           setBoard({ posts: [], mode: "", teacher: false });
@@ -65,8 +66,13 @@ export default function ClassAnnouncementBoard() {
     setBusy(true);
     setNotice(null);
     try {
-      await boardRequest(await getBody());
-      setBoard(await boardRequest());
+      const body = await getBody();
+      if (board.mode === "preview") {
+        setBoard(updatePreview(body));
+      } else {
+        await boardRequest(body);
+        setBoard(await boardRequest());
+      }
       onSuccess?.();
       setNotice({ text: success });
     } catch (error) {
@@ -108,7 +114,8 @@ export default function ClassAnnouncementBoard() {
         </div>
         <h3>{post.title}</h3>
         <p>{post.message}</p>
-        {post.attachment && <a className={styles.attachment} href={"/api/board?download=" + encodeURIComponent(post.id)}>
+        {post.attachment && <a className={styles.attachment} href={post.attachment.data ? "data:application/pdf;base64," + post.attachment.data
+          : "/api/board?download=" + encodeURIComponent(post.id)} download={post.attachment.name}>
           <span aria-hidden="true">↓</span> {post.attachment.name}
         </a>}
         {manage && (
@@ -158,7 +165,7 @@ export default function ClassAnnouncementBoard() {
             <p>{teacherView ? "Publish class updates and keep important announcements at the top."
               : "Class updates, deadlines, and files in one place."}</p>
           </div>
-          {teacherView && board.teacher && <button className={styles.signout} disabled={busy} onClick={() =>
+          {teacherView && board.mode === "aws" && board.teacher && <button className={styles.signout} disabled={busy} onClick={() =>
             change(() => ({ action: "logout" }), "Signed out.", () => edit())}>Sign out</button>}
         </section>
 
@@ -168,7 +175,7 @@ export default function ClassAnnouncementBoard() {
             <div className={styles.feedHeader}>
               <h2 id="announcements">Announcements</h2>
               {["preview", "local"].includes(board.mode) && <span className={styles.demo}>
-                {board.mode === "preview" ? "Sample announcements" : "Local demo"}
+                {board.mode === "preview" ? "Browser demo · Changes saved on this device" : "Local demo"}
               </span>}
             </div>
             <div className={styles.filters} aria-label="Filter by category">
@@ -180,15 +187,16 @@ export default function ClassAnnouncementBoard() {
           </section>
         )}
 
-        {teacherView && !board.teacher && (
+        {teacherView && board.mode === "preview" && (
+          <p className={styles.notice}>Demo changes stay in this browser.</p>
+        )}
+
+        {teacherView && board.mode === "aws" && !board.teacher && (
           <form className={styles.panel + " " + styles.login} onSubmit={signIn}>
             <h2>Teacher sign-in</h2>
-            {board.mode === "preview" ? <p>Teacher tools are available on the configured class server.</p> :
-              <>
-                <label htmlFor="password">Teacher password</label>
-                <input id="password" name="password" type="password" required autoComplete="current-password" />
-                <button className={styles.primary} disabled={busy || !board.mode}>Sign in</button>
-              </>}
+            <label htmlFor="password">Teacher password</label>
+            <input id="password" name="password" type="password" required autoComplete="current-password" />
+            <button className={styles.primary} disabled={busy}>Sign in</button>
           </form>
         )}
 

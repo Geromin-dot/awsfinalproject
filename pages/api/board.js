@@ -17,6 +17,7 @@ function signature(payload) {
 }
 
 function hasSession(req) {
+  if (mode() === "local") return true;
   if (!process.env.BOARD_SESSION_SECRET) return false;
   const [payload, token] = (req.cookies[cookieName] || "").split(".");
   const expiry = Number(payload.split(":")[0]);
